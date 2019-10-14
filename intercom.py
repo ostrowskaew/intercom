@@ -4,28 +4,28 @@
 #
 # https://github.com/Tecnologias-multimedia/intercom
 #
-# Based on: https://python-sounddevice.readthedocs.io/en/0.3.13/_downloads/wire.py
+# Based on: https://python-sounddevice.readthedocs.io/en/0.3.13/_downloads/wire.pycmd
 
 
-import sounddevice as sd                                                        # https://python-sounddevice.readthedocs.io
-import numpy                                                                    # https://numpy.org/
-import argparse                                                                 # https://docs.python.org/3/library/argparse.html
-import socket                                                                   # https://docs.python.org/3/library/socket.html
-import queue                                                                    # https://docs.python.org/3/library/queue.html
+import sounddevice as sd  # https://python-sounddevice.readthedocs.io
+import numpy  # https://numpy.org/
+import argparse  # https://docs.python.org/3/library/argparse.html
+import socket  # https://docs.python.org/3/library/socket.html
+import queue  # https://docs.python.org/3/library/queue.html
 
 if __debug__:
     import sys
 
-class Intercom:
 
-    max_packet_size = 32768                                                     # In bytes
-   
+class Intercom:
+    max_packet_size = 32768  # In bytes
+
     def init(self, args):
         self.bytes_per_sample = args.bytes_per_sample
         self.number_of_channels = args.number_of_channels
         self.samples_per_second = args.samples_per_second
         self.samples_per_chunk = args.samples_per_chunk
-        self.packet_format = "!i" + str(self.samples_per_chunk)+"h"             # <chunk_number, chunk_data>
+        self.packet_format = "!i" + str(self.samples_per_chunk) + "h"  # <chunk_number, chunk_data>
         self.listening_port = args.mlp
         self.destination_IP_addr = args.ia
         self.destination_port = args.ilp
@@ -43,7 +43,7 @@ class Intercom:
             self.dtype = numpy.int8
         elif self.bytes_per_sample == 2:
             self.dtype = numpy.int16
-            
+
     def run(self):
         sending_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         receiving_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -56,7 +56,7 @@ class Intercom:
             message, source_address = receiving_sock.recvfrom(
                 Intercom.max_packet_size)
             q.put(message)
-        
+
         def record_send_and_play(indata, outdata, frames, time, status):
             sending_sock.sendto(
                 indata,
@@ -65,14 +65,15 @@ class Intercom:
                 message = q.get_nowait()
             except queue.Empty:
                 message = numpy.zeros(
-                    (self.samples_per_chunk, self.bytes_per_sample),
+                    (self.samples_per_chunk, self.number_of_channels),
                     self.dtype)
             outdata[:] = numpy.frombuffer(
                 message,
                 numpy.int16).reshape(
-                    self.samples_per_chunk, self.number_of_channels)
+                self.samples_per_chunk, self.number_of_channels)
             if __debug__:
-                sys.stderr.write("."); sys.stderr.flush()
+                sys.stderr.write(".");
+                sys.stderr.flush()
 
         with sd.Stream(
                 samplerate=self.samples_per_second,
@@ -122,22 +123,13 @@ class Intercom:
                             "--ia",
                             help="Interlocutor's IP address or name.",
                             type=str,
-                            default="localhost")
+                            default="192.168.43.151")
 
         args = parser.parse_args()
         return args
 
-        if __debug__:
-            print("Samples per chunk: {}".format(self.args.samples_per_chunk))
-            print("Samples per second: {}".format(self.args.samples_per_second))
-            print("Numbers of channels: {}".format(self.args.number_of_channels))
-            print("Bytes per sample: {}".format(self.args.bytes_per_sample))
-            print("I'm listening at port: {}".format(self.args.mlp))
-            print("Interlocutor's listening port: {}".format(self.args.ilp))
-            print("Interlocutor's IP address: {}".format(self.args.ia))
 
 if __name__ == "__main__":
-
     intercom = Intercom()
     args = intercom.parse_args()
     intercom.init(args)
