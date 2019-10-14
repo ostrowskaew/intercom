@@ -36,7 +36,7 @@ class IntercomBuffer(inter.Intercom):
 
             #asarray - przekształcanie listy do tablicy
             #umieszczanie otrzymanych wartości w bufferze
-            self.messagebuffer[index % self.buffer_size] =\
+            self.messagebuffer[index % self.buffer_size + (self.buffer_size/2)] =\
                 numpy.asarray(msg).reshape(self.samples_per_chunk, self.number_of_channels)
 
         def record_send_and_play(indata, outdata, frames, time, status):
@@ -56,6 +56,7 @@ class IntercomBuffer(inter.Intercom):
             #odcztujemy widomosc z buffera i zapisujemy ja do zmiennej message
             message = self.messagebuffer[self.received_counter % self.buffer_size]
 
+            #zerujemy miejsce z którego odczytaliśmy
             self.messagebuffer[self.received_counter % self.buffer_size] = numpy.zeros(
                     (self.samples_per_chunk, self.bytes_per_sample),
                     self.dtype)
