@@ -3,82 +3,61 @@
 import sounddevice as sd
 import numpy as np
 import struct
-from intercom_buffer import Intercom_buffer
 from intercom import Intercom
 
 if __debug__:
     import sys
 
+class Intercom_buffer(Intercom):
 
-class Intercom_bitplanes(Intercom_buffer):
+    MAX_CHUNK_NUMBER = 65536
+
     def init(self, args):
-        Intercom_buffer.init(self, args)
-        self.bitpacks_per_chunk = self.frames_per_chunk // 8
-        self.packet_format = f"HH{self.bitpacks_per_chunk}B"
+        Intercom.init(self, args)
+        self.chunks_to_buffer = args.chunks_to_buffer
+        self.cells_in_buffer = self.chunks_to_buffer * 2
+        self._buffer = [self.generate_zero_chunk()] * self.cells_in_buffer
+        self.packet_format = f"!H{self.samples_per_chunk}h"
+        if __debug__:
+            print(f"chunks_to_buffer={self.chunks_to_buffer}")
+
+    def receive_and_buffer(self):
+        message, source_address = self.receiving_sock.recvfrom(Intercom.MAX_MESSAGE_SIZE)
+        chunk_number, *chunk = struct.unpack(self.packet_format, message)
+        self._buffer[chunk_number % self.cells_in_buffer] = np.asarray(chunk).reshape(self.frames_per_chunk, self.number_of_channels)
+        return chunk_number
+
+    def send(self, indata):
+        message = struct.pack(self.packet_format, self.recorded_chunk_number, *(indata.flatten()))
+        self.sending_sock.sendto(message, (self.destination_IP_addr, self.destination_port))
+
+    def record_send_and_play(self, indata, outdata, frames, time, status):
+        self.send(indata)
+        self.recorded_chunk_number = (self.recorded_chunk_number + 1) % self.MAX_CHUNK_NUMBER
+        chunk = self._buffer[self.played_chunk_number % self.cells_in_buffer]
+        self._buffer[self.played_chunk_number % self.cells_in_buffer] = self.generate_zero_chunk()
+        self.played_chunk_number = (self.played_chunk_number + 1) % self.cells_in_buffer
+        outdata[:] = chunk
+        if __debug__:
+            sys.stderr.write("."); sys.stderr.flush()
 
     def run(self):
-        self.bits_number = 15
         self.recorded_chunk_number = 0
         self.played_chunk_number = 0
-        self.column_iterator = 0
-
-        def receive_and_buffer():
-            message, source_address = self.receiving_sock.recvfrom(Intercom.MAX_MESSAGE_SIZE)
-            bitplane_number, chunk_number, *bitplane = struct.unpack(self.packet_format, message)
-
-            bitplane = np.asarray(bitplane, dtype=np.uint8)
-            bitplane = np.unpackbits(bitplane)
-
-            self._buffer[chunk_number % self.cells_in_buffer][:, bitplane_number % 2] |= (
-                        bitplane << bitplane_number // 2)
-
-            return chunk_number
-
-        def record_send_and_play(indata, outdata, frames, time, status):
-            self.bitplane_number = 0
-
-            self.recorded_chunk_number += 1
-            for j in range(16):
-                bit_plane_weight = ((indata >> self.bits_number - j) & 1)[:, 0]
-
-                # send 1st channel
-                bit_plane_weight = bit_plane_weight.astype(np.uint8)
-                bit_plane_weight = np.packbits(bit_plane_weight)
-                message = struct.pack(self.packet_format, self.bitplane_number, self.recorded_chunk_number,
-                                      *bit_plane_weight)
-                self.bitplane_number += 1
-                self.sending_sock.sendto(message, (self.destination_IP_addr, self.destination_port))
-
-                bit_plane_weight = ((indata >> self.bits_number - j) & 1)[:, 1]
-                # send 2nd channel
-                bit_plane_weight = bit_plane_weight.astype(np.uint8)
-                bit_plane_weight = np.packbits(bit_plane_weight)
-                message = struct.pack(self.packet_format, self.bitplane_number, self.recorded_chunk_number,
-                                      *bit_plane_weight)
-                self.bitplane_number += 1
-                self.sending_sock.sendto(message, (self.destination_IP_addr, self.destination_port))
-
-            chunk = self._buffer[self.played_chunk_number % self.cells_in_buffer]
-
-            self._buffer[self.played_chunk_number % self.cells_in_buffer] = self.generate_zero_chunk()
-            self.played_chunk_number = (self.played_chunk_number + 1) % self.cells_in_buffer
-            outdata[:] = chunk
-
-            if __debug__:
-                sys.stderr.write(".");
-                sys.stderr.flush()
-
-        with sd.Stream(samplerate=self.frames_per_second, blocksize=self.frames_per_chunk, dtype=np.int16,
-                       channels=self.number_of_channels, callback=record_send_and_play):
+        with sd.Stream(samplerate=self.frames_per_second, blocksize=self.frames_per_chunk, dtype=np.int16, channels=self.number_of_channels, callback=self.record_send_and_play):
             print("-=- Press CTRL + c to quit -=-")
-            first_received_chunk_number = receive_and_buffer()
+            first_received_chunk_number = self.receive_and_buffer()
             self.played_chunk_number = (first_received_chunk_number - self.chunks_to_buffer) % self.cells_in_buffer
             while True:
-                receive_and_buffer()
+                self.receive_and_buffer()
 
+    def add_args(self):
+        parser = Intercom.add_args(self)
+        parser.add_argument("-cb", "--chunks_to_buffer", help="Number of chunks to buffer", type=int, default=32)
+        return parser
 
 if __name__ == "__main__":
-    intercom = Intercom_bitplanes()
+    intercom = Intercom_buffer()
     parser = intercom.add_args()
     args = parser.parse_args()
     intercom.init(args)
